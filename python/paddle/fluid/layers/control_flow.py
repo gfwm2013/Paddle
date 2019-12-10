@@ -22,12 +22,12 @@ from ..framework import Program, Variable, Operator
 from ..layer_helper import LayerHelper, unique_name
 from ..initializer import force_init_on_cpu
 from .nn import logical_and, logical_not, logical_or
-from .utils import assert_same_structure, flatten, map_structure
+from .utils import assert_same_structure, map_structure
 import numpy
 import warnings
 import six
 from functools import reduce, partial
-from ..data_feeder import convert_dtype
+from ..data_feeder import convert_dtype, check_type_and_dtype
 
 __all__ = [
     'While', 'Switch', 'increment', 'array_write', 'create_array', 'less_than',
@@ -81,9 +81,11 @@ def select_input(inputs, mask):
     helper = LayerHelper('select_input', **locals())
     if isinstance(inputs, list) or isinstance(inputs, tuple):
         input_dtype = inputs[0].dtype
+        input_shape = inputs[0].shape
     else:
         input_dtype = inputs.dtype
-    out = helper.create_variable(dtype=input_dtype)
+        input_shape = inputs.shape
+    out = helper.create_variable(dtype=input_dtype, shape=input_shape)
     helper.append_op(
         type='select_input',
         inputs={'X': inputs,
@@ -254,6 +256,10 @@ def Print(input,
                data: 3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3, 
                
     '''
+    check_type_and_dtype(input, 'input', Variable,
+                         ['float32', 'float64', 'int32', 'int64', 'bool'],
+                         'fluid.layers.Print')
+
     helper = LayerHelper('print' + "_" + input.name, **locals())
     output = helper.create_variable_for_type_inference(input.dtype)
     helper.append_op(
@@ -1794,7 +1800,6 @@ class ConditionalBlock(object):
 
         param_list = [
             parent_block._var_recursive(each_name) for each_name in params
-            if each_name not in input_set
         ]
 
         out_list = []
@@ -1827,19 +1832,113 @@ def copy_var_to_parent_block(var, layer_helper):
     assert parent_idx >= 0, "Got wrong parent block index when assigning var to parent scope in control_flow"
     parent_block = prog.block(parent_idx)
 
-    parent_block_var = parent_block.create_var(dtype=var.dtype, type=var.type)
+    parent_block_var = parent_block.create_var(
+        dtype=var.dtype, shape=var.shape, type=var.type)
     assign(var, parent_block_var)
     return parent_block_var
 
 
 def cond(pred, true_fn=None, false_fn=None, name=None):
     """
-    TODO:(huihuangzheng) developing
+    This API returns ``true_fn()`` if the predicate ``pred`` is true else
+    ``false_fn()`` . Users could also set ``true_fn`` or ``false_fn`` to
+    ``None`` if do nothing and this API will treat the callable simply returns
+    ``None`` in this case.
+
+    ``true_fn`` and ``false_fn`` should return same nest structure of tensors
+    or both return ``None`` if user doens't like to return anything. A nest
+    structure of tensors in PaddlePaddle is tensor(s), or tuple of tensors, or
+    list of tensors.
+    
+    Note: 
+        1. The tuples or lists returned by ``true_fn`` and ``false_fn`` must have
+        the same shape because of dataflow model of PaddlePaddle while the
+        tensors in the tuples or the lists can have different shapes.
+
+        2. Any tensors or operations created outside of ``true_fn`` and
+        ``false_fn`` will be executed regardless of which branch is selected at
+        runtime. This has frequently surprised users who expected a lazy
+        semantics. For example:
+
+        .. code-block:: python
+        
+            import paddle.fluid as fluid
+            a = fluid.data(name='a', shape=[-1, 1], dtype='float32')
+            b = fluid.data(name='b', shape=[-1, 1], dtype='float32')
+            c = a * b
+            out = fluid.layers.cond(a < b, lambda: a + c, lambda: b * b)
+
+        No matter whether ``a < b`` , ``c = a * b`` will run.
+
+    Args:
+        pred(Variable): A boolean tensor whose numel should be 1. The boolean
+            value determines whether to return the result of ``true_fn`` or
+            ``false_fn`` .
+        true_fn(callable, optional): A callable to be performed if ``pred`` is
+            true. The default value is ``None`` .
+        false_fn(callable, optional): A callable to be performed if ``pred`` is
+            false. The default value is ``None`` .
+        name(str, optional): The default value is ``None`` . Normally users
+             don't have to set this parameter. For more information, please
+             refer to :ref:`api_guide_Name` .
+
+    Returns:
+        Variable|list(Variable)|tuple(Variable): returns ``true_fn()`` if the
+        predicate ``pred`` is true else ``false_fn()`` .
+
+    Raises:
+        TypeError: if ``true_fn`` or ``false_fn`` is not callable.
+        ValueError: if ``true_fn`` and ``false_fn`` don't return the same nest
+            structure of tensors.
+
+    Examples:
+        .. code-block:: python
+
+            import paddle.fluid as fluid
+            import paddle.fluid.layers as layers
+            from paddle.fluid.executor import Executor
+            from paddle.fluid.framework import Program, program_guard
+
+            #
+            # pseudocode:
+            # if 0.1 < 0.23:
+            #     return 1, True
+            # else:
+            #     return 3, 2
+            #
+
+            def true_func():
+                return layers.fill_constant(
+                    shape=[1, 2], dtype='int32', value=1), layers.fill_constant(
+                        shape=[2, 3], dtype='bool', value=True)
+
+            def false_func():
+                return layers.fill_constant(
+                    shape=[3, 4], dtype='float32', value=3), layers.fill_constant(
+                        shape=[4, 5], dtype='int64', value=2)
+
+            main_program = Program()
+            startup_program = Program()
+            with program_guard(main_program, startup_program):
+                x = layers.fill_constant(shape=[1], dtype='float32', value=0.1)
+                y = layers.fill_constant(shape=[1], dtype='float32', value=0.23)
+                pred = layers.less_than(x, y)            
+                out = layers.cond(pred, true_func, false_func)
+                # out is a tuple containing 2 tensors
+
+            place = fluid.CUDAPlace(0) if fluid.core.is_compiled_with_cuda(
+            ) else fluid.CPUPlace()
+            exe = fluid.Executor(place)
+            ret = exe.run(main_program, fetch_list=out)
+            # ret[0] = [[1 1]]
+            # ret[1] = [[ True  True  True]
+            #           [ True  True  True]]
+
     """
     helper = LayerHelper('cond', **locals())
     true_output = None
     false_output = None
-    copy_to_global_func = lambda var: copy_var_to_parent_block(var, helper)
+    copy_to_parent_func = lambda var: copy_var_to_parent_block(var, helper)
     if true_fn is not None:
         if not callable(true_fn):
             raise TypeError("The true_fn in cond must be callable")
@@ -1847,7 +1946,7 @@ def cond(pred, true_fn=None, false_fn=None, name=None):
         with true_cond_block.block():
             origin_true_output = true_fn()
             if origin_true_output is not None:
-                true_output = map_structure(copy_to_global_func,
+                true_output = map_structure(copy_to_parent_func,
                                             origin_true_output)
     if false_fn is not None:
         if not callable(false_fn):
@@ -1857,7 +1956,7 @@ def cond(pred, true_fn=None, false_fn=None, name=None):
         with false_cond_block.block():
             origin_false_output = false_fn()
             if origin_false_output is not None:
-                false_output = map_structure(copy_to_global_func,
+                false_output = map_structure(copy_to_parent_func,
                                              origin_false_output)
 
     if true_output is None and false_output is None:
@@ -1924,6 +2023,7 @@ def case(pred_fn_pairs, default=None, name=None):
         .. code-block:: python
 
             import paddle.fluid as fluid
+            import paddle.fluid.layers as layers
 
             def fn_1():
                 return layers.fill_constant(shape=[1, 2], dtype='float32', value=1)
@@ -1936,7 +2036,7 @@ def case(pred_fn_pairs, default=None, name=None):
 
             main_program = fluid.default_startup_program()
             startup_program = fluid.default_main_program()
-            with program_guard(main_program, startup_program):
+            with fluid.program_guard(main_program, startup_program):
                 x = layers.fill_constant(shape=[1], dtype='float32', value=0.3)
                 y = layers.fill_constant(shape=[1], dtype='float32', value=0.1)
                 z = layers.fill_constant(shape=[1], dtype='float32', value=0.2)
@@ -3027,6 +3127,8 @@ def switch_case(branch_index, branch_fns, default=None, name=None):
         .. code-block:: python
 
             import paddle.fluid as fluid
+            import paddle.fluid.layers as layers
+
             def fn_1():
                 return layers.fill_constant(shape=[1, 2], dtype='float32', value=1)
 
@@ -3038,7 +3140,7 @@ def switch_case(branch_index, branch_fns, default=None, name=None):
 
             main_program = fluid.default_startup_program()
             startup_program = fluid.default_main_program()
-            with program_guard(main_program, startup_program):
+            with fluid.program_guard(main_program, startup_program):
                 index_1 = layers.fill_constant(shape=[1], dtype='int32', value=1)
                 index_2 = layers.fill_constant(shape=[1], dtype='int32', value=2)
 

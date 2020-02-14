@@ -27,11 +27,12 @@ from paddle.fluid.backward import append_backward
 
 class TestApiWhileLoop(unittest.TestCase):
     def test_var_tuple(self):
-        def cond(i):
+        def cond(i, ten):
             return layers.less_than(i, ten)
 
-        def body(i):
-            return layers.elementwise_add(x=i, y=one)
+        def body(i, ten):
+            i = layers.elementwise_add(x=i, y=one)
+            return (i, ten)
 
         main_program = Program()
         startup_program = Program()
@@ -39,7 +40,7 @@ class TestApiWhileLoop(unittest.TestCase):
             i = layers.fill_constant(shape=[1], dtype='int64', value=0)
             one = layers.fill_constant(shape=[1], dtype='int64', value=1)
             ten = layers.fill_constant(shape=[1], dtype='int64', value=10)
-            out = layers.while_loop(cond, body, (i, ))
+            out = layers.while_loop(cond, body, (i, ten))
 
         place = fluid.CUDAPlace(0) if core.is_compiled_with_cuda(
         ) else fluid.CPUPlace()
@@ -49,13 +50,13 @@ class TestApiWhileLoop(unittest.TestCase):
             np.allclose(np.asarray(res[0]), np.full((1), 10, np.int64)))
 
     def test_var_list(self):
-        def cond(i, mem):
+        def cond(i, mem, ten):
             return layers.less_than(i, ten)
 
-        def body(i, mem):
+        def body(i, mem, ten):
             mem = layers.elementwise_add(x=mem, y=one)
             i = layers.increment(i)
-            return [i, mem]
+            return [i, mem, ten]
 
         main_program = Program()
         startup_program = Program()
@@ -64,7 +65,7 @@ class TestApiWhileLoop(unittest.TestCase):
             ten = layers.fill_constant(shape=[1], dtype='int64', value=10)
             mem = fluid.data(name='mem', shape=[10], dtype='float32')
             one = layers.fill_constant(shape=[10], dtype='float32', value=1)
-            out = layers.while_loop(cond, body, [i, mem])
+            out = layers.while_loop(cond, body, [i, mem, ten])
 
             data = np.random.rand(10).astype('float32')
             data_one = np.ones(10).astype('float32')
@@ -80,27 +81,27 @@ class TestApiWhileLoop(unittest.TestCase):
 
 class TestApiWhileLoop_Nested(unittest.TestCase):
     def test_nested_net(self):
-        def external_cond(i, j, init, sums):
+        def external_cond(i, j, init, sums, loop_len1, loop_len2):
             return layers.less_than(i, loop_len1)
 
-        def external_body(i, j, init, sums):
-            def internal_cond(j, init, sums):
+        def external_body(i, j, init, sums, loop_len1, loop_len2):
+            def internal_cond(j, init, sums, loop_len2):
                 return layers.less_than(j, loop_len2)
 
-            def internal_body(j, init, sums):
+            def internal_body(j, init, sums, loop_len2):
                 init = layers.elementwise_add(x=init, y=ones)
                 sums = layers.elementwise_add(x=init, y=sums)
                 j = layers.increment(j)
-                return [j, init, sums]
+                return [j, init, sums, loop_len2]
 
             result = layers.while_loop(internal_cond, internal_body,
-                                       [j, init, sums])
+                                       [j, init, sums, loop_len2])
             j = result[0]
             init = result[1]
             sums = result[2]
             sums = layers.elementwise_add(x=init, y=sums)
             i = layers.increment(i)
-            return [i, j, init, sums]
+            return [i, j, init, sums, loop_len1, loop_len2]
 
         main_program = Program()
         startup_program = Program()
@@ -114,7 +115,7 @@ class TestApiWhileLoop_Nested(unittest.TestCase):
             ones = layers.fill_constant(shape=[3, 3], dtype='float32', value=1)
 
             out = layers.while_loop(external_cond, external_body,
-                                    [i, j, init, sums])
+                                    [i, j, init, sums, loop_len1, loop_len2])
 
             data = np.random.rand(3, 3).astype('float32')
             data_sums = np.zeros([3, 3]).astype('float32')
@@ -136,13 +137,13 @@ class TestApiWhileLoop_Nested(unittest.TestCase):
 
 class TestApiWhileLoop_Backward(unittest.TestCase):
     def test_while_loop_backward(self):
-        def cond(i, x):
+        def cond(i, x, eleven):
             return layers.less_than(i, eleven)
 
-        def body(i, x):
+        def body(i, x, eleven):
             x = layers.elementwise_mul(x=i, y=i)
             i = layers.increment(i)
-            return [i, x]
+            return [i, x, eleven]
 
         main_program = Program()
         startup_program = Program()
@@ -154,7 +155,7 @@ class TestApiWhileLoop_Backward(unittest.TestCase):
             x = fluid.data(name='x', shape=[1], dtype='float32')
             x.stop_gradient = False
 
-            out = layers.while_loop(cond, body, [i, x])
+            out = layers.while_loop(cond, body, [i, x, eleven])
             mean = layers.mean(out[1])
             append_backward(mean)
 
@@ -177,21 +178,21 @@ class TestApiWhileLoop_Backward(unittest.TestCase):
 
 class TestApiWhileLoop_NestedWithBackwardAndLoDTensorArray(unittest.TestCase):
     def test_nested_net_with_backward_and_lodtensor(self):
-        def external_cond(i, j, x, mem_array):
-            return layers.less_than(i, array_len)
+        def external_cond(i, j, x, mem_array, array_len1, array_len2):
+            return layers.less_than(i, array_len1)
 
-        def external_body(i, j, x, mem_array):
-            def internal_cond(j, x, mem_array):
+        def external_body(i, j, x, mem_array, array_len1, array_len2):
+            def internal_cond(j, x, mem_array, array_len2):
                 return layers.less_than(j, array_len2)
 
-            def internal_body(j, x, mem_array):
+            def internal_body(j, x, mem_array, array_len2):
                 inner_data = layers.array_read(array=data_array, i=j)
                 inner_prev = layers.array_read(array=mem_array, i=j)
                 inner_sum_0 = layers.elementwise_add(x=inner_data, y=inner_prev)
                 inner_sum_1 = layers.elementwise_add(x=x, y=inner_sum_0)
                 j = layers.increment(x=j, in_place=True)
                 layers.array_write(inner_sum_1, i=j, array=mem_array)
-                return [j, x, mem_array]
+                return [j, x, mem_array, array_len2]
 
             outer_data = layers.array_read(array=data_array, i=i)
             outer_prev = layers.array_read(array=mem_array, i=i)
@@ -199,9 +200,9 @@ class TestApiWhileLoop_NestedWithBackwardAndLoDTensorArray(unittest.TestCase):
             outer_sum_1 = layers.elementwise_add(x=x, y=outer_sum_0)
             i = layers.increment(x=i, in_place=True)
             layers.array_write(outer_sum_1, i=i, array=mem_array)
-            j, x, mem_array = layers.while_loop(internal_cond, internal_body,
-                                                [j, x, mem_array])
-            return [i, j, x, mem_array]
+            j, x, mem_array, _ = layers.while_loop(
+                internal_cond, internal_body, [j, x, mem_array, array_len2])
+            return [i, j, x, mem_array, array_len1, array_len2]
 
         main_program = Program()
         startup_program = Program()
@@ -222,13 +223,14 @@ class TestApiWhileLoop_NestedWithBackwardAndLoDTensorArray(unittest.TestCase):
             layers.array_write(d2, i, array=data_array)
             i = layers.zeros(shape=[1], dtype='int64')
             i.stop_gradient = True
-            array_len = layers.fill_constant(shape=[1], dtype='int64', value=1)
+            array_len1 = layers.fill_constant(shape=[1], dtype='int64', value=1)
             j = layers.fill_constant(shape=[1], dtype='int64', value=1)
             j.stop_gradient = True
             array_len2 = layers.fill_constant(shape=[1], dtype='int64', value=3)
 
-            out = layers.while_loop(external_cond, external_body,
-                                    [i, j, x, mem_array])
+            out = layers.while_loop(
+                external_cond, external_body,
+                [i, j, x, mem_array, array_len1, array_len2])
 
             sum_result = layers.array_read(array=mem_array, i=j)
             mean = layers.mean(sum_result)
@@ -257,10 +259,10 @@ class TestApiWhileLoop_NestedWithBackwardAndLoDTensorArray(unittest.TestCase):
 
 class TestApiWhileLoopWithSwitchCase(unittest.TestCase):
     def test_with_switch_case(self):
-        def cond(i):
+        def cond(i, ten):
             return layers.less_than(i, ten)
 
-        def body(i):
+        def body(i, ten):
             def fn_add_three():
                 data_add_three = layers.elementwise_add(x=i, y=three)
                 return data_add_three
@@ -273,11 +275,12 @@ class TestApiWhileLoopWithSwitchCase(unittest.TestCase):
                 data_add_one = layers.elementwise_add(x=i, y=one)
                 return data_add_one
 
-            return layers.switch_case(
+            i = layers.switch_case(
                 branch_index=i,
                 branch_fns={2: fn_add_three,
                             5: fn_square},
                 default=fn_add_one)
+            return [i, ten]
 
         main_program = Program()
         startup_program = Program()
@@ -286,7 +289,7 @@ class TestApiWhileLoopWithSwitchCase(unittest.TestCase):
             ten = layers.fill_constant(shape=[1], dtype='int64', value=10)
             three = layers.fill_constant(shape=[1], dtype='int64', value=3)
             one = layers.fill_constant(shape=[1], dtype='int64', value=1)
-            out = layers.while_loop(cond, body, [i])
+            out = layers.while_loop(cond, body, [i, ten])
 
         place = fluid.CUDAPlace(0) if core.is_compiled_with_cuda(
         ) else fluid.CPUPlace()
@@ -299,73 +302,101 @@ class TestApiWhileLoopWithSwitchCase(unittest.TestCase):
 
 class TestApiWhileLoop_Error(unittest.TestCase):
     def test_error(self):
-        def cond_returns_constant(i):
+        def cond_returns_constant(i, ten):
             return 1
 
-        def cond_returns_not_bool_tensor(i):
+        def cond_returns_not_bool_tensor(i, ten):
             return layers.increment(i)
 
-        def cond_returns_bool_tensor(i):
-            return layers.less_than(i, ten)
-
-        def cond_returns_2d_tensor(i):
+        def cond_returns_2d_tensor(i, ten_2d):
             return layers.less_than(i, ten_2d)
 
-        def body(i):
-            return layers.increment(i)
+        def cond(i, ten):
+            return layers.less_than(i, ten)
+
+        def body(i, ten):
+            i = layers.increment(i)
+            return [i, ten]
+
+        def body_with_2d_loop_length(i, ten_2d):
+            i = layers.increment(i)
+            return [i, ten_2d]
+
+        def body_returns_error_length(i, ten):
+            i = layers.increment(i)
+            return [i, i, ten]
+
+        def body_returns_error_type(i, ten):
+            i = layers.increment(i)
+            return i
 
         main_program = Program()
         startup_program = Program()
         with program_guard(main_program, startup_program):
-            data = layers.fill_constant(shape=[1], dtype='int64', value=1)
-            data_1d = layers.fill_constant(shape=[1], dtype='int64', value=1)
-            data_2d = layers.fill_constant(shape=[2, 2], dtype='int64', value=1)
+            i = layers.fill_constant(shape=[1], dtype='int64', value=1)
+            i_2d = layers.fill_constant(shape=[2, 2], dtype='int64', value=1)
             ten = layers.fill_constant(shape=[1], dtype='int64', value=10)
             ten_2d = layers.fill_constant(shape=[2, 2], dtype='int64', value=10)
 
             # The type of `cond` in Op(while_loop) must be callable 
             def type_error_cond():
-                out = layers.while_loop(data, body, [data_1d])
+                out = layers.while_loop(i, body, [i, ten])
 
             self.assertRaises(TypeError, type_error_cond)
 
             # The type of `body` in Op(while_loop) must be callable
             def type_error_body():
-                out = layers.while_loop(cond_returns_bool_tensor, data,
-                                        [data_1d])
+                out = layers.while_loop(cond, i, [i, ten])
 
             self.assertRaises(TypeError, type_error_body)
 
             # The type of `loop_vars` in Op(while_loop) must be list or tuple
             def type_error_loop_vars():
-                out = layers.while_loop(cond_returns_bool_tensor, body, data_1d)
+                out = layers.while_loop(cond, body, i)
 
             self.assertRaises(TypeError, type_error_loop_vars)
 
             # The value of `loop_vars` is empty
             def value_error_loop_vars():
-                out = layers.while_loop(cond_returns_bool_tensor, body, [])
+                out = layers.while_loop(cond, body, [])
 
             self.assertRaises(ValueError, value_error_loop_vars)
 
             # The type of `cond` returns in Op(while_loop) must be Variable
             def type_error_cond_returns_not_variable():
-                out = layers.while_loop(cond_returns_constant, body, [data_1d])
+                out = layers.while_loop(cond_returns_constant, body, [i, ten])
 
             self.assertRaises(TypeError, type_error_cond_returns_not_variable)
 
             # The type of `cond` returns in Op(while_loop) must be a bollean variable
             def type_error_cond_returns_not_boolean():
                 out = layers.while_loop(cond_returns_not_bool_tensor, body,
-                                        [data_1d])
+                                        [i, ten])
 
             self.assertRaises(TypeError, type_error_cond_returns_not_boolean)
 
             # The shape of `cond` returns in Op(while_loop) must be 1
             def type_error_shape_cond_returns_2d():
-                out = layers.while_loop(cond_returns_2d_tensor, body, [data_2d])
+                out = layers.while_loop(cond_returns_2d_tensor,
+                                        body_with_2d_loop_length,
+                                        [i_2d, ten_2d])
 
             self.assertRaises(TypeError, type_error_shape_cond_returns_2d)
+
+            # The value of `body` returns in Op(while_loop) is not the same length
+            # as loop_vars
+            def type_error_body_returns_error_length():
+                out = layers.while_loop(cond, body_returns_error_length,
+                                        [i, ten])
+
+            self.assertRaises(ValueError, type_error_body_returns_error_length)
+
+            # The value of `body` returns in Op(while_loop) is not the same type
+            # as loop_vars
+            def type_error_body_returns_error_type():
+                out = layers.while_loop(cond, body_returns_error_type, [i, ten])
+
+            self.assertRaises(ValueError, type_error_body_returns_error_type)
 
 
 if __name__ == '__main__':

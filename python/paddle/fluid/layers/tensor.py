@@ -474,10 +474,20 @@ def assign(input, output=None):
                     ['float32', 'float64', 'int32', 'int64', 'bool'], 'assign',
                     '(When the type of input in assign is Variable.)')
         if output is None:
-            output = helper.create_variable_for_type_inference(
-                dtype=input.dtype)
+            if input.type == core.VarDesc.VarType.LOD_TENSOR_ARRAY:
+                output = helper.create_variable(
+                    name="{0}.out".format(helper.name),
+                    type=core.VarDesc.VarType.LOD_TENSOR_ARRAY,
+                    dtype=input.dtype)
+            else:
+                output = helper.create_variable_for_type_inference(
+                    dtype=input.dtype)
         helper.append_op(
             type='assign', inputs={'X': [input]}, outputs={'Out': [output]})
+        if output.type == core.VarDesc.VarType.LOD_TENSOR_ARRAY:
+            print("assign API: output is a LoDTensorArray\n\n")
+        else:
+            print("assign API: output is a Tensor\n\n")
     elif isinstance(input, numpy.ndarray):
         dtype = convert_np_dtype_to_dtype_(input.dtype)
         if dtype == VarDesc.VarType.FP32:

@@ -1268,6 +1268,7 @@ def array_write(x, i, array=None):
         inputs={'X': [x],
                 'I': [i]},
         outputs={'Out': [array]})
+    print("GF debug information: array_write api\n\n")
     return array
 
 
@@ -1624,6 +1625,7 @@ def array_read(array, i):
         inputs={'X': [array],
                 'I': [i]},
         outputs={'Out': [out]})
+    print("GF debug information array_read API\n\n")
     return out
 
 

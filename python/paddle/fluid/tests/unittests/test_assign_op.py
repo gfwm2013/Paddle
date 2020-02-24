@@ -21,12 +21,13 @@ import paddle.fluid.core as core
 from paddle.fluid.op import Operator
 import paddle.fluid as fluid
 from paddle.fluid import compiler, Program, program_guard
-
-
+from paddle.fluid.backward import append_backward
+import paddle.fluid.layers as layers
+"""
 class TestAssignOp(op_test.OpTest):
     def setUp(self):
         self.op_type = "assign"
-        x = np.random.random(size=(100, 10)).astype('float64')
+        x = np.random.random(size=(100, 10)).astype('float32')
         self.inputs = {'X': x}
         self.outputs = {'Out': x}
 
@@ -60,6 +61,34 @@ class TestAssignOpError(unittest.TestCase):
             self.assertRaises(TypeError, fluid.layers.assign, x8)
             x9 = np.array([[2.5, 2.5]], dtype='uint8')
             self.assertRaises(TypeError, fluid.layers.assign, x9)
+"""
+
+
+class TestAssignOpWithLoDTensorArray(unittest.TestCase):
+    def test_assign_LoDTensorArray(self):
+        main_program = Program()
+        startup_program = Program()
+        with program_guard(main_program):
+            x = fluid.data(name='x', shape=[1], dtype='float32')
+            x.stop_gradient = False
+            y = fluid.layers.fill_constant(shape=[1], dtype='float32', value=2)
+            z = fluid.layers.elementwise_mul(x=x, y=y)
+            i = fluid.layers.fill_constant(shape=[1], dtype='int64', value=0)
+            init_array = fluid.layers.array_write(x=z, i=i)
+            array = layers.create_array(dtype='float32')
+            fluid.layers.assign(init_array, array)
+            mul = fluid.layers.array_read(array=array, i=i)
+            mean = fluid.layers.mean(mul)
+            append_backward(mean)
+            print(main_program)
+        place = fluid.CUDAPlace(1)
+        exe = fluid.Executor(place)
+        feed_x = np.random.random(1).astype('float32')
+        feed_mul = feed_x * 2
+        res = exe.run(main_program,
+                      feed={'x': feed_x},
+                      fetch_list=[mul.name, x.grad_name])
+        self.assertTrue(np.asarray(res[0]), feed_mul)
 
 
 if __name__ == '__main__':

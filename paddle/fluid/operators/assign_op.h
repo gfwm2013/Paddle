@@ -36,6 +36,7 @@ class AssignFunctor {
     auto &out_array = *out_->GetMutable<framework::LoDTensorArray>();
     out_array.resize(array.size());
     for (size_t i = 0; i < array.size(); ++i) {
+      std::cout << i << "\n";
       copy_tensor(array[i], &out_array[i]);
     }
   }

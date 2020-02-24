@@ -97,6 +97,9 @@ class GradOpDescMakerBase {
                      (*this->grad_to_var_)[g_name] = fwd_var_name;
                      return g_name;
                    });
+    for (size_t i = 0; i < ret_val.size(); i++) {
+      std::cout << "ret_val[" << i << "]: " << ret_val[i] << "\n\n";
+    }
     return ret_val;
   }
 

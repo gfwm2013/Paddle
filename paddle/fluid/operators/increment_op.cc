@@ -16,6 +16,8 @@
 #include <memory>
 #include <string>
 
+DECLARE_double(fraction_of_gpu_memory_to_use);
+
 namespace paddle {
 namespace operators {
 
@@ -34,6 +36,8 @@ class IncrementOp : public framework::OperatorWithKernel {
     PADDLE_ENFORCE_EQ(1, framework::product(ctx->GetInputDim("X")));
     ctx->SetOutputDim("Out", ctx->GetInputDim("X"));
     ctx->ShareLoD("X", "Out");
+    std::cout << "GF debug information - FLAGS_fraction_of_gpu_memory_to_use: "
+              << FLAGS_fraction_of_gpu_memory_to_use << "\n\n";
   }
 
  protected:

@@ -2800,9 +2800,7 @@ class DynamicRNN(object):
                 rnn_output = drnn()
         """
         self._assert_in_rnn_block_("step_input")
-        if not isinstance(x, Variable):
-            raise TypeError(
-                "step_input() can only take a Variable as its input.")
+        check_type(x, 'x', (Variable), 'step_input')
         parent_block = self._parent_block_()
         if self.lod_rank_table is None:
             self.lod_rank_table = parent_block.create_var(
@@ -2969,9 +2967,7 @@ class DynamicRNN(object):
                 rnn_output = drnn()
         """
         self._assert_in_rnn_block_("static_input")
-        if not isinstance(x, Variable):
-            raise TypeError(
-                "static_input() can only take a Variable as its input")
+        check_type(x, 'x', (Variable), 'static_input')
         if self.lod_rank_table is None:
             raise RuntimeError(
                 "static_input() must be called after step_input().")
@@ -3136,10 +3132,12 @@ class DynamicRNN(object):
         """
         self._assert_in_rnn_block_('memory')
         self._init_zero_idx_()
+        check_dtype(dtype, 'dtype', ['float32', 'float64', 'int32', 'int64'],
+                    'memory')
+        if shape is not None:
+            check_type(shape, 'shape', (list, tuple), 'memory')
         if init is not None:
-            if not isinstance(init, Variable):
-                raise TypeError(
-                    "The input arg `init` of memory() must be a Variable")
+            check_type(init, 'init', (Variable), 'memory')
             parent_block = self._parent_block_()
             init_tensor = init
             if need_reorder == True:
@@ -3220,12 +3218,8 @@ class DynamicRNN(object):
             ValueError: When :code:`update_memory()` is called before :code:`step_input()` .
         """
         self._assert_in_rnn_block_('update_memory')
-        if not isinstance(ex_mem, Variable):
-            raise TypeError("The input arg `ex_mem` of update_memory() must "
-                            "be a Variable")
-        if not isinstance(new_mem, Variable):
-            raise TypeError("The input arg `new_mem` of update_memory() must "
-                            "be a Variable")
+        check_type(ex_mem, 'ex_mem', (Variable), 'update_memory')
+        check_type(new_mem, 'new_mem', (Variable), 'update_memory')
 
         mem_array = self.mem_dict.get(ex_mem.name, None)
         if mem_array is None:
@@ -3252,6 +3246,7 @@ class DynamicRNN(object):
         self._assert_in_rnn_block_('output')
         parent_block = self._parent_block_()
         for each in outputs:
+            check_type(each, 'outputs', (Variable), 'randn')
             outside_array = parent_block.create_var(
                 name=unique_name.generate_with_ignorable_key("_".join(
                     [self.helper.name, "output_array", each.name])),

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections
 import logging
 import numpy as np
 import sys
@@ -20,7 +21,7 @@ import paddle
 from paddle.fluid import dygraph, core, framework
 from paddle.fluid.executor import Executor
 from paddle.fluid.dygraph.io import INFER_MODEL_SUFFIX, INFER_PARAMS_SUFFIX
-from paddle.nn import Linear, Conv2D
+from paddle.nn import Linear, Conv2D, AvgPool2D, MaxPool2D
 from paddle.fluid.dygraph.nn import BatchNorm, Pool2D, Conv2DTranspose
 from paddle.fluid.io import load_inference_model, save_inference_model
 from paddle.nn.layer.activation import ReLU, LeakyReLU, Sigmoid, ReLU6, Tanh, Softmax, PReLU, Swish
@@ -48,6 +49,11 @@ _op_real_in_out_name = {
     "sigmoid": [["X"], ["Out"]],
     "swish": [["X"], ["Out"]],
 }
+
+_support_ops = [
+    "elementwise_add", "pool2d", "softmax", "relu", "relu6", "leaky_relu",
+    "prelu", "tanh", "batch_norm", "sigmoid", "swish"
+]
 
 
 class ImperativeQuantAware(object):
@@ -263,6 +269,7 @@ class ImperativeQuantAware(object):
                 parent = obj
 
             quant_layer = self._get_quantized_counterpart(layer)
+            setattr(quant_layer, "layer_name", layer.full_name())
             setattr(obj, target, quant_layer)
 
         self._out_scale.calc_out_scale(model)
@@ -309,7 +316,7 @@ class ImperativeCalcOutScale(object):
             BatchNorm, Conv2D, Conv2DTranspose, LeakyReLU, Linear, PReLU,
             Pool2D, ReLU, ReLU6, Sigmoid, Softmax, Tanh, Swish)
         self._register_hook_handle_list = []
-        self._out_scale_dict = {}
+        self._out_scale_dict = collections.OrderedDict()
 
     def calc_out_scale(self, model):
         """
@@ -325,7 +332,8 @@ class ImperativeCalcOutScale(object):
             model, dygraph.Layer), "model must be the instance of dygraph.Layer"
         for _, layer in model.named_sublayers():
             if not isinstance(layer, self._out_scale_layer_type_list):
-                continue
+                if 'quantized_' not in layer.full_name():
+                    continue
             forward_post_hook_handle = layer.register_forward_post_hook(
                 self._forward_post_hook)
             self._register_hook_handle_list.append(forward_post_hook_handle)
@@ -363,6 +371,8 @@ class ImperativeCalcOutScale(object):
             for key in self._out_scale_dict:
                 self._out_scale_dict[key] = float(self._out_scale_dict[key]
                                                   .numpy())
+                print(key, ' out_threshold value is ',
+                      self._out_scale_dict[key])
 
         paddle.jit.save(layer=layer, path=path, input_spec=input_spec, **config)
 
@@ -391,8 +401,18 @@ class ImperativeCalcOutScale(object):
         # Traverse all ops in the program and find out the op matching
         # the Layer in the dynamic graph.
         layer_var_dict = {}
+        #ops_list = [key for key, _ in self._out_scale_dict.items()]
+        #print(ops_list)
+        #op_num = 0
         for block in inference_program.blocks:
             for op in block.ops:
+                #if op.type in _support_ops:
+                #    if op_num >= len(ops_list):
+                #        continue
+                #    key = ops_list[op_num]
+                #    op._set_attr('out_threshold', self._out_scale_dict[key])
+                #    op_num += 1
+
                 if op.type in _op_real_in_out_name:
                     output_var_names = quantization_pass._get_op_output_var_names(
                         op)
@@ -435,6 +455,7 @@ class ImperativeCalcOutScale(object):
                 layer_name = layer_name.replace('relu', 're_lu')
             if layer_name not in self._out_scale_dict:
                 continue
+            print(var_name_op_list[1].type)
             var_name_op_list[1]._set_attr('out_threshold',
                                           self._out_scale_dict[layer_name])
 
@@ -463,4 +484,10 @@ class ImperativeCalcOutScale(object):
             layer._out_scale = quant_nn.MovingAverageAbsMaxScale(
                 output.name, self._moving_rate, output.dtype)
         scale_out = layer._out_scale(output)
-        self._out_scale_dict[layer.full_name()] = scale_out
+        if hasattr(layer, 'layer_name'):
+            layer_name = layer.layer_name
+        else:
+            layer_name = layer.full_name()
+        self._out_scale_dict[layer_name] = scale_out
+        if 're_lu' in layer_name:
+            print(layer_name, " attr value is: ", scale_out.numpy())

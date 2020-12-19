@@ -200,10 +200,12 @@ class TestImperativeOutSclae(unittest.TestCase):
                 executor=exe,
                 model_filename="lenet" + INFER_MODEL_SUFFIX,
                 params_filename="lenet" + INFER_PARAMS_SUFFIX))
+        print(inference_program)
         model_ops = inference_program.global_block().ops
 
         conv2d_count, mul_count = 0, 0
         for i, op in enumerate(model_ops):
+            print(op.type)
             if op.type == 'conv2d':
                 if conv2d_count > 0:
                     self.assertTrue(

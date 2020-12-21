@@ -34,10 +34,17 @@ class LayerHelper(LayerHelperBase):
         # can not use both `layer_type` and `name`. Deprecate LayerHelper
         # and write a Helper for dygraph mode.
         if name is None:
-            self.kwargs['name'] = unique_name.generate(layer_type)
+            tmp = unique_name.generate(layer_type)
+            if 'pool' in layer_type or 'conv' in layer_type:
+                print("XXXXXXXXXXX layer_type is: ", layer_type, ", naem is: ",
+                      tmp)
+            #self.kwargs['name'] = unique_name.generate(layer_type)
+            self.kwargs['name'] = tmp
 
         super(LayerHelper, self).__init__(
             self.kwargs['name'], layer_type=layer_type)
+        if 'pool' in layer_type or 'conv' in layer_type:
+            print("YYYYYYYYY layer_type is: ", layer_type, ", naem is: ", tmp)
 
     def append_op(self, *args, **kwargs):
         return self.main_program.current_block().append_op(*args, **kwargs)

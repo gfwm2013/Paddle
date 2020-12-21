@@ -882,6 +882,8 @@ class Pool2D(layers.Layer):
         inputs = {"X": [input]}
 
         pool_out = self._helper.create_variable_for_type_inference(self._dtype)
+        print("2222222 Origin Pool2D output name is ", pool_out.name)
+        print("2222222 Origin Pool2D self.name is ", self._helper.name)
 
         self._helper.append_op(
             type=self._l_type,

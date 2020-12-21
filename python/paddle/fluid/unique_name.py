@@ -102,6 +102,8 @@ def generate(key):
             name2 = paddle.utils.unique_name.generate('fc')
             print(name1, name2) # fc_0, fc_1
     """
+    if "pool" in key or 'conv' in key:
+        print("33333333 key value is ", key)
     return generator(key)
 
 

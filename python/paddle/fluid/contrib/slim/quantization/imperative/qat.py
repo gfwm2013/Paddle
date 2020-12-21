@@ -401,9 +401,9 @@ class ImperativeCalcOutScale(object):
         # Traverse all ops in the program and find out the op matching
         # the Layer in the dynamic graph.
         layer_var_dict = {}
-        #ops_list = [key for key, _ in self._out_scale_dict.items()]
+        ops_list = [key for key, _ in self._out_scale_dict.items()]
         #print(ops_list)
-        #op_num = 0
+        op_count = 0
         for block in inference_program.blocks:
             for op in block.ops:
                 #if op.type in _support_ops:
@@ -414,52 +414,69 @@ class ImperativeCalcOutScale(object):
                 #    op_num += 1
 
                 if op.type in _op_real_in_out_name:
-                    output_var_names = quantization_pass._get_op_output_var_names(
-                        op)
-                    for output_var_name in output_var_names:
-                        output_var_tensor = block.var(output_var_name)
-                        if output_var_tensor.dtype not in [
-                                core.VarDesc.VarType.FP64,
-                                core.VarDesc.VarType.FP32
-                        ]:
-                            continue
-                        # Because the Layer in dygraph may correspond to multiple ops
-                        # in static program after being saved. To ensure correctness,
-                        # the outscale collected for output of dygraph Layer can only
-                        # be set to the last op in the corresponding ops in static program.
-                        #
-                        # We can judge the execution order of the ops which corresponding
-                        # to dygraph Layer by the name of output. And use dict to save
-                        # the corresponding relationship between the dygraph Layer and the
-                        # static graph op that needs to set the outscale attribute.
-                        if '.' not in output_var_name:
-                            continue
-                        dynamic_layer_name, var_name_suffix = output_var_name.split(
-                            ".")
-                        if dynamic_layer_name in layer_var_dict:
-                            if layer_var_dict[dynamic_layer_name][
-                                    0] < var_name_suffix:
+                    if op.type in [
+                            "conv2d", "conv2d_transpose", "mul",
+                            "elementwise_add"
+                    ]:
+                        output_var_names = quantization_pass._get_op_output_var_names(
+                            op)
+                        for output_var_name in output_var_names:
+                            output_var_tensor = block.var(output_var_name)
+                            if output_var_tensor.dtype not in [
+                                    core.VarDesc.VarType.FP64,
+                                    core.VarDesc.VarType.FP32
+                            ]:
+                                continue
+                            # Because the Layer in dygraph may correspond to multiple ops
+                            # in static program after being saved. To ensure correctness,
+                            # the outscale collected for output of dygraph Layer can only
+                            # be set to the last op in the corresponding ops in static program.
+                            #
+                            # We can judge the execution order of the ops which corresponding
+                            # to dygraph Layer by the name of output. And use dict to save
+                            # the corresponding relationship between the dygraph Layer and the
+                            # static graph op that needs to set the outscale attribute.
+                            if '.' not in output_var_name:
+                                continue
+                            dynamic_layer_name, var_name_suffix = output_var_name.split(
+                                ".")
+                            if dynamic_layer_name in layer_var_dict:
+                                if layer_var_dict[dynamic_layer_name][
+                                        0] < var_name_suffix:
+                                    layer_var_dict[dynamic_layer_name] = [
+                                        var_name_suffix, op
+                                    ]
+                            else:
                                 layer_var_dict[dynamic_layer_name] = [
                                     var_name_suffix, op
                                 ]
-                        else:
-                            layer_var_dict[
-                                dynamic_layer_name] = [var_name_suffix, op]
-
-        # Because the naming styles of static and dynamic graph are different,
-        # in order to avoid mistakes, we unify the name here.
+                    else:
+                        if op_count >= len(ops_list):
+                            continue
+                        op._set_attr('out_threshold',
+                                     self._out_scale_dict[ops_list[op_count]])
+                    print("ZZZZZZZZZZ op_count value is ", op_count)
+                    op_count += 1
         for (layer_name, var_name_op_list) in layer_var_dict.items():
-            if 'prelu' in layer_name:
-                layer_name = layer_name.replace('prelu', 'p_re_lu')
-            if 'relu' in layer_name:
-                layer_name = layer_name.replace('relu', 're_lu')
             if layer_name not in self._out_scale_dict:
                 continue
-            print(var_name_op_list[1].type)
             var_name_op_list[1]._set_attr('out_threshold',
                                           self._out_scale_dict[layer_name])
 
-        # Save the processed program.
+#        # Because the naming styles of static and dynamic graph are different,
+#        # in order to avoid mistakes, we unify the name here.
+#        for (layer_name, var_name_op_list) in layer_var_dict.items():
+#            if 'prelu' in layer_name:
+#                layer_name = layer_name.replace('prelu', 'p_re_lu')
+#            if 'relu' in layer_name:
+#                layer_name = layer_name.replace('relu', 're_lu')
+#            if layer_name not in self._out_scale_dict:
+#                continue
+#            print(var_name_op_list[1].type)
+#            var_name_op_list[1]._set_attr('out_threshold',
+#                                          self._out_scale_dict[layer_name])
+
+# Save the processed program.
         save_inference_model(
             dirname=dirname,
             feeded_var_names=feed_target_names,
@@ -489,5 +506,5 @@ class ImperativeCalcOutScale(object):
         else:
             layer_name = layer.full_name()
         self._out_scale_dict[layer_name] = scale_out
-        if 're_lu' in layer_name:
-            print(layer_name, " attr value is: ", scale_out.numpy())
+        #if 're_lu' in layer_name:
+        #    print(layer_name, " attr value is: ", scale_out.numpy())

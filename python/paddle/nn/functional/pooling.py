@@ -348,6 +348,8 @@ def avg_pool2d(x,
     helper = LayerHelper(op_type, **locals())
     dtype = helper.input_dtype(input_param_name='x')
     pool_out = helper.create_variable_for_type_inference(dtype)
+    print("11111111---> pool_out name is ", pool_out.name)
+    print("11111111---> helper name is ", helper.name)
 
     helper.append_op(
         type=op_type,
